@@ -3,10 +3,9 @@ import logging
 from datetime import datetime, timedelta
 
 from cinq_auditor_required_tags.utils import s3_removal_policy_exists, s3_removal_lifecycle_policy_exists
-from cloud_inquisitor.constants import ActionStatus
-
 from cloud_inquisitor import get_aws_session
 from cloud_inquisitor.config import dbconfig
+from cloud_inquisitor.constants import ActionStatus
 from cloud_inquisitor.constants import AuditActions, NS_AUDITOR_REQUIRED_TAGS
 from cloud_inquisitor.log import auditlog
 from cloud_inquisitor.plugins.types.accounts import AWSAccount
@@ -14,6 +13,10 @@ from cloud_inquisitor.plugins.types.enforcements import Enforcement
 from cloud_inquisitor.plugins.types.resources import EC2Instance
 
 logger = logging.getLogger(__name__)
+
+
+def noop(client, resource):
+    return ActionStatus.SUCCEED, resource.metrics()
 
 
 def process_action(resource, action, action_issuer='unknown'):
@@ -177,6 +180,44 @@ def delete_s3_bucket(client, resource):
     return ActionStatus.SUCCEED, resource.metrics()
 
 
+def stop_rds_instance(client, resource):
+    resource_info = {
+        'accountId': resource.account.account_id,
+        'accountName': resource.account.account_name,
+        'action': 'stop',
+        'region': resource.location,
+        'resourceId': resource.id
+    }
+    response = client.invoke(
+        FunctionName=dbconfig.get('action_taker_arn', NS_AUDITOR_REQUIRED_TAGS, ''),
+        Payload=json.dumps(resource_info).encode('utf-8')
+    )
+
+    if response.get('StatusCode') == 200:
+        return ActionStatus.SUCCEED, resource.metrics()
+    else:
+        return ActionStatus.FAILED, {}
+
+
+def terminate_rds_instance(client, resource):
+    resource_info = {
+        'accountId': resource.account.account_id,
+        'accountName': resource.account.account_name,
+        'action': 'terminate',
+        'region': resource.location,
+        'resourceId': resource.id
+    }
+    response = client.invoke(
+        FunctionName=dbconfig.get('action_taker_arn', NS_AUDITOR_REQUIRED_TAGS, ''),
+        Payload=json.dumps(resource_info).encode('utf-8')
+    )
+
+    if response.get('StatusCode') == 200:
+        return ActionStatus.SUCCEED, resource.metrics()
+    else:
+        return ActionStatus.FAILED, {}
+
+
 action_mapper = {
     'aws_ec2_instance': {
         'service_name': 'ec2',
@@ -187,5 +228,10 @@ action_mapper = {
         'service_name': 's3',
         AuditActions.STOP: stop_s3_bucket,
         AuditActions.REMOVE: delete_s3_bucket
+    },
+    'aws_rds_instance': {
+        'service_name': 'lambda',
+        AuditActions.STOP: stop_rds_instance,
+        AuditActions.REMOVE: terminate_rds_instance
     }
 }
