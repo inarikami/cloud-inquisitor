@@ -4,11 +4,11 @@ from datetime import datetime
 
 import pytimeparse
 from cinq_auditor_required_tags.providers import process_action
-from cloud_inquisitor.constants import ActionStatus
-
 from cloud_inquisitor import CINQ_PLUGINS
 from cloud_inquisitor.config import dbconfig, ConfigOption
-from cloud_inquisitor.constants import NS_AUDITOR_REQUIRED_TAGS, NS_GOOGLE_ANALYTICS, NS_EMAIL, AuditActions, GDPR_COMPLIANCE_TAG_VALUES, MAX_AGE_TAG_VALUES, GDPR_TAGS
+from cloud_inquisitor.constants import ActionStatus
+from cloud_inquisitor.constants import NS_AUDITOR_REQUIRED_TAGS, NS_GOOGLE_ANALYTICS, NS_EMAIL, AuditActions, \
+    GDPR_COMPLIANCE_TAG_VALUES, MAX_AGE_TAG_VALUES, GDPR_TAGS
 from cloud_inquisitor.database import db
 from cloud_inquisitor.plugins import BaseAuditor
 from cloud_inquisitor.plugins.types.issues import RequiredTagsIssue
@@ -166,19 +166,24 @@ class RequiredTagsAuditor(BaseAuditor):
             else:
                 fixed_issues.append(existing_issue)
 
-        new_issues = {
-            resource_id: resource for resource_id, resource in found_issues.items()
-            if
-            ((datetime.utcnow() - resource[
-                'resource'].resource_creation_date).total_seconds() // 3600) >= self.grace_period
-        }
+        new_issues = {}
+        for resource_id, resource in found_issues.items():
+            try:
+                if (
+                        (datetime.utcnow() - resource['resource'].resource_creation_date).total_seconds() // 3600
+                ) >= self.grace_period:
+                    new_issues[resource_id] = resource
+            except Exception as ex:
+                self.log.error(
+                    'Failed to construct new issue {}, Error: {}'.format(resource_id, ex)
+                )
+
         db.session.commit()
         return known_issues, new_issues, fixed_issues
 
     def create_new_issues(self, new_issues):
         try:
             for non_compliant_resource in new_issues.values():
-
                 properties = {
                     'resource_id': non_compliant_resource['resource_id'],
                     'account_id': non_compliant_resource['resource'].account_id,
@@ -331,6 +336,13 @@ class RequiredTagsAuditor(BaseAuditor):
         db.session.commit()
         return action_item
 
+    def process_action(self, resource, action):
+        return process_action(
+            resource,
+            action,
+            self.ns
+        )
+
     def process_actions(self, actions):
         """Process the actions we want to take
 
@@ -348,19 +360,17 @@ class RequiredTagsAuditor(BaseAuditor):
 
             try:
                 if action['action'] == AuditActions.REMOVE:
-                    action_status = process_action(
+                    action_status = self.process_action(
                         resource,
-                        AuditActions.REMOVE,
-                        self.ns
+                        AuditActions.REMOVE
                     )
                     if action_status == ActionStatus.SUCCEED:
                         db.session.delete(action['issue'].issue)
 
                 elif action['action'] == AuditActions.STOP:
-                    action_status = process_action(
-                            resource,
-                            AuditActions.STOP,
-                            self.ns
+                    action_status = self.process_action(
+                        resource,
+                        AuditActions.STOP
                     )
                     if action_status == ActionStatus.SUCCEED:
                         action['issue'].update({
