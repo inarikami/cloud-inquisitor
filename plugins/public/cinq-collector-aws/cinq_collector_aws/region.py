@@ -661,7 +661,7 @@ class AWSRegionCollector(BaseCollector):
         rds_collector_account = AWSAccount.get(self.rds_collector_account)
         rds_session = get_aws_session(rds_collector_account)
         # Existing RDS resources come from database
-        existing_rds_dbs = RDSInstance.get_all(self.account)
+        existing_rds_dbs = RDSInstance.get_all(self.account, self.region)
 
         try:
             # Special session pinned to a single account for Lambda invocation so we
