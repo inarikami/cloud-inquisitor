@@ -34,6 +34,8 @@ def process_action(resource, action, action_issuer='unknown'):
 
     func_action = action_mapper[resource.resource_type][action]
     extra_info = {}
+    action_status = ActionStatus.UNKNOWN
+
     if func_action:
         if action_mapper[resource.resource_type]['service_name'] == 'lambda':
             client = get_aws_session(
@@ -215,19 +217,22 @@ def operate_rds_instance(client, resource, action):
     }
 
     try:
+        logger.info('Auditor Request Payload: {}'.format(resource_info))
+
         response = client.invoke(
             FunctionName=dbconfig.get('action_taker_arn', NS_AUDITOR_REQUIRED_TAGS, ''),
             Payload=json.dumps(resource_info).encode('utf-8')
         )
 
         response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+        logger.info('Server Response Payload: {}'.format(response_payload))
 
         if response_payload.get('success'):
             return ActionStatus.SUCCEED, response_payload.get('data', {})
         else:
             failure_message = response_payload.get('message')
 
-            if response_payload['data']['actionTaken'] == 'ignored':
+            if response_payload['data'].get('actionTaken', None) == 'ignored':
                 return ActionStatus.IGNORED, {'message': failure_message}
             else:
                 return ActionStatus.FAILED, {'message': failure_message}
